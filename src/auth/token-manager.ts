@@ -39,12 +39,15 @@ export class TokenManager {
       throw new Error('web_session_token is required');
     }
 
-    const { chat_token, expires_in } = await this.requestSession(webSessionToken);
+    // Strip "Bearer " prefix if provided (users may pass the full header value)
+    const cleanToken = webSessionToken.replace(/^Bearer\s+/i, '').trim();
+
+    const { chat_token, expires_in } = await this.requestSession(cleanToken);
 
     this.tokenState = {
       chat_token,
       expires_at: Math.floor(Date.now() / 1000) + expires_in,
-      web_session_token: webSessionToken,
+      web_session_token: cleanToken,
     };
   }
 

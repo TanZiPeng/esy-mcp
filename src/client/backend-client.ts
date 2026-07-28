@@ -49,7 +49,16 @@ export class BackendClient {
    */
   async get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
     const url = this.buildUrl(path, params);
-    return this.requestWithRetry<T>(url, { method: 'GET' });
+    console.log(`[${new Date().toISOString()}] → GET ${path}`);
+    const start = Date.now();
+    try {
+      const result = await this.requestWithRetry<T>(url, { method: 'GET' });
+      console.log(`[${new Date().toISOString()}] ✓ GET ${path} (${Date.now() - start}ms)`);
+      return result;
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] ✗ GET ${path} (${Date.now() - start}ms):`, error instanceof Error ? error.message : error);
+      throw error;
+    }
   }
 
   /**
@@ -59,6 +68,8 @@ export class BackendClient {
    */
   async post<T>(path: string, body?: unknown): Promise<T> {
     const url = this.buildUrl(path);
+    console.log(`[${new Date().toISOString()}] → POST ${path}`);
+    const start = Date.now();
     const options: RequestInit = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -66,7 +77,14 @@ export class BackendClient {
     if (body !== undefined) {
       options.body = JSON.stringify(body);
     }
-    return this.requestWithRetry<T>(url, options);
+    try {
+      const result = await this.requestWithRetry<T>(url, options);
+      console.log(`[${new Date().toISOString()}] ✓ POST ${path} (${Date.now() - start}ms)`);
+      return result;
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] ✗ POST ${path} (${Date.now() - start}ms):`, error instanceof Error ? error.message : error);
+      throw error;
+    }
   }
 
   // ─── Private Helpers ─────────────────────────────────────────────────────
@@ -133,10 +151,20 @@ export class BackendClient {
         throw new BackendError(401, 'Unauthorized');
       }
 
-      const body = (await response.json()) as EsyApiResponse<T>;
+      // Read response body as text first for better error diagnostics
+      const text = await response.text();
+      
+      let body: EsyApiResponse<T>;
+      try {
+        body = JSON.parse(text) as EsyApiResponse<T>;
+      } catch {
+        console.error(`[BackendClient] Non-JSON response from ${url}: status=${response.status}, body=${text.substring(0, 200)}`);
+        throw new BackendError(response.status, `Backend returned non-JSON response (HTTP ${response.status})`);
+      }
 
       // Non-zero code means backend-level error
       if (body.code !== 0) {
+        console.error(`[BackendClient] Backend error from ${url}: code=${body.code}, msg=${body.msg}`);
         throw new BackendError(body.code, body.msg);
       }
 
@@ -146,6 +174,9 @@ export class BackendClient {
       if (error instanceof BackendError || error instanceof NetworkError) {
         throw error;
       }
+
+      // Log unexpected errors for debugging
+      console.error(`[BackendClient] Unexpected error for ${url}:`, error);
 
       // Classify network errors
       throw this.classifyNetworkError(error);

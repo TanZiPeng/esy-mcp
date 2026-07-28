@@ -1,22 +1,19 @@
 /**
  * ESY AI MCP Service - Streamable HTTP Transport Setup
  *
- * Creates an Express application with Streamable HTTP transport endpoints
- * for MCP communication. Manages per-session state including token management
- * and backend client instances.
- *
- * Validates: Requirements 15.1, 15.2
+ * Stateless design: each session gets a shared TokenManager that is initialized
+ * on the first tool call carrying web_session_token. Since the Agent platform
+ * may not preserve mcp-session-id, all tools accept web_session_token as input
+ * and handle auth inline.
  */
 
 import express, { type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { z } from 'zod';
 import { TokenManager } from '../auth/token-manager.js';
 import { BackendClient } from '../client/backend-client.js';
-import { normalizeError, toMcpErrorResponse } from '../errors/index.js';
-import { createEsyMcpServer } from '../server.js';
+import { createStatelessMcpServer } from '../server.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -27,33 +24,17 @@ interface SessionEntry {
 
 // ─── Transport App Factory ───────────────────────────────────────────────────
 
-/**
- * Creates an Express app with Streamable HTTP transport for MCP.
- *
- * Endpoints:
- * - POST /mcp  — handles MCP requests (initialize + tool calls)
- * - GET  /mcp  — SSE streaming for server-to-client notifications
- * - DELETE /mcp — session termination
- *
- * Each new session gets its own TokenManager, BackendClient, and McpServer.
- * The `initialize_session` tool must be called first to authenticate.
- *
- * @param baseUrl - ESY AI backend base URL
- */
 export function createTransportApp(baseUrl: string): express.Express {
   const app = express();
-
-  // Parse JSON bodies for POST requests
   app.use(express.json());
 
-  // Session storage keyed by transport-generated session ID
   const sessions = new Map<string, SessionEntry>();
 
   // ─── POST /mcp ─────────────────────────────────────────────────────────
 
   app.post('/mcp', async (req: Request, res: Response) => {
     try {
-      // Check for existing session
+      console.log(`[${new Date().toISOString()}] ← POST /mcp (session: ${req.headers['mcp-session-id'] || 'new'})`);
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
       if (sessionId && sessions.has(sessionId)) {
@@ -62,41 +43,19 @@ export function createTransportApp(baseUrl: string): express.Express {
         return;
       }
 
-      // New session — create transport with session ID generator
+      // New session
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         onsessioninitialized: (id: string) => {
-          // Store session once the transport has assigned an ID
           sessions.set(id, { transport, server });
         },
       });
 
-      // Create per-session token manager and backend client
       const tokenManager = new TokenManager(baseUrl);
       const client = new BackendClient(baseUrl, tokenManager);
-      const server = createEsyMcpServer(client);
+      const server = createStatelessMcpServer(client, tokenManager);
 
-      // Register the initialize_session tool for this session
-      server.tool(
-        'initialize_session',
-        'Initialize the session with a web_session_token to authenticate against the ESY AI backend. Must be called before using any other tools.',
-        { web_session_token: z.string().min(1).describe('Web session token from the customer website') },
-        async (params) => {
-          try {
-            await tokenManager.initialize(params.web_session_token);
-            return {
-              content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Session initialized successfully' }) }],
-            };
-          } catch (error) {
-            return toMcpErrorResponse(normalizeError(error));
-          }
-        },
-      );
-
-      // Connect server to transport
       await server.connect(transport);
-
-      // Handle the initial request (pre-parsed body passed to avoid re-parsing)
       await transport.handleRequest(req, res, req.body);
     } catch (error) {
       console.error('Error handling POST /mcp:', error);
@@ -110,12 +69,10 @@ export function createTransportApp(baseUrl: string): express.Express {
 
   app.get('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
     if (!sessionId || !sessions.has(sessionId)) {
       res.status(400).json({ error: 'Invalid or missing session ID' });
       return;
     }
-
     try {
       const session = sessions.get(sessionId)!;
       await session.transport.handleRequest(req, res);
@@ -127,11 +84,10 @@ export function createTransportApp(baseUrl: string): express.Express {
     }
   });
 
-  // ─── DELETE /mcp (Session Termination) ─────────────────────────────────
+  // ─── DELETE /mcp ───────────────────────────────────────────────────────
 
   app.delete('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
     if (sessionId && sessions.has(sessionId)) {
       try {
         const session = sessions.get(sessionId)!;
@@ -141,7 +97,6 @@ export function createTransportApp(baseUrl: string): express.Express {
         console.error('Error closing session:', error);
       }
     }
-
     res.status(200).end();
   });
 

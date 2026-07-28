@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+.kiro
+tests
+coverage
+*.log
+.kiro
+docs

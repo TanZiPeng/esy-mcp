@@ -15,11 +15,9 @@
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
 import { TokenManager } from './auth/token-manager.js';
 import { BackendClient } from './client/backend-client.js';
-import { normalizeError, toMcpErrorResponse } from './errors/index.js';
-import { createEsyMcpServer } from './server.js';
+import { createStatelessMcpServer } from './server.js';
 import { createTransportApp } from './transport/setup.js';
 
 // ─── Environment Validation ──────────────────────────────────────────────────
@@ -37,24 +35,7 @@ const isStdio = process.argv.includes('--stdio');
 if (isStdio) {
   const tokenManager = new TokenManager(baseUrl);
   const client = new BackendClient(baseUrl, tokenManager);
-  const server = createEsyMcpServer(client);
-
-  // Register initialize_session tool for stdio mode
-  server.tool(
-    'initialize_session',
-    'Initialize the session with a web_session_token to authenticate against the ESY AI backend. Must be called before using any other tools.',
-    { web_session_token: z.string().min(1).describe('Web session token from the customer website') },
-    async (params) => {
-      try {
-        await tokenManager.initialize(params.web_session_token);
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Session initialized successfully' }) }],
-        };
-      } catch (error) {
-        return toMcpErrorResponse(normalizeError(error));
-      }
-    },
-  );
+  const server = createStatelessMcpServer(client, tokenManager);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
