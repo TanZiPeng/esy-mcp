@@ -49,14 +49,17 @@ export class BackendClient {
    */
   async get<T>(path: string, params?: Record<string, string | number | undefined>): Promise<T> {
     const url = this.buildUrl(path, params);
-    console.log(`[${new Date().toISOString()}] → GET ${path}`);
+    const paramsStr = params ? JSON.stringify(params) : '';
+    console.log(`[${new Date().toISOString()}] → GET ${path} ${paramsStr ? '| Params: ' + paramsStr : ''}`);
     const start = Date.now();
     try {
       const result = await this.requestWithRetry<T>(url, { method: 'GET' });
-      console.log(`[${new Date().toISOString()}] ✓ GET ${path} (${Date.now() - start}ms)`);
+      const duration = Date.now() - start;
+      const resultStr = JSON.stringify(result);
+      console.log(`[${new Date().toISOString()}] ✓ GET ${path} (${duration}ms) | Response: ${resultStr.length > 300 ? resultStr.substring(0, 300) + '...' : resultStr}`);
       return result;
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] ✗ GET ${path} (${Date.now() - start}ms):`, error instanceof Error ? error.message : error);
+      console.error(`[${new Date().toISOString()}] ✗ GET ${path} (${Date.now() - start}ms) | Error: ${error instanceof Error ? error.message : error}`);
       throw error;
     }
   }
@@ -68,7 +71,7 @@ export class BackendClient {
    */
   async post<T>(path: string, body?: unknown): Promise<T> {
     const url = this.buildUrl(path);
-    console.log(`[${new Date().toISOString()}] → POST ${path}`);
+    console.log(`[${new Date().toISOString()}] → POST ${path} ${body ? '| Body: ' + JSON.stringify(body).substring(0, 200) : ''}`);
     const start = Date.now();
     const options: RequestInit = {
       method: 'POST',
@@ -79,10 +82,12 @@ export class BackendClient {
     }
     try {
       const result = await this.requestWithRetry<T>(url, options);
-      console.log(`[${new Date().toISOString()}] ✓ POST ${path} (${Date.now() - start}ms)`);
+      const duration = Date.now() - start;
+      const resultStr = JSON.stringify(result);
+      console.log(`[${new Date().toISOString()}] ✓ POST ${path} (${duration}ms) | Response: ${resultStr.length > 300 ? resultStr.substring(0, 300) + '...' : resultStr}`);
       return result;
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] ✗ POST ${path} (${Date.now() - start}ms):`, error instanceof Error ? error.message : error);
+      console.error(`[${new Date().toISOString()}] ✗ POST ${path} (${Date.now() - start}ms) | Error: ${error instanceof Error ? error.message : error}`);
       throw error;
     }
   }
